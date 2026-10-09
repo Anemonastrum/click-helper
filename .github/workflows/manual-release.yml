@@ -1,0 +1,154 @@
+name: Build APK and publish GitHub Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (example: v0.1.0-rc1)"
+        type: string
+        required: true
+      variant:
+        description: "debug = preview APK; release = stable signing secrets required"
+        type: choice
+        options:
+          - debug
+          - release
+        default: debug
+        required: true
+      prerelease:
+        description: "Mark as pre-release (always true for debug builds)"
+        type: boolean
+        default: true
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: manual-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TAG: ${{ inputs.tag }}
+      VARIANT: ${{ inputs.variant }}
+      IS_PRERELEASE: ${{ inputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android API and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Release workflow must be dispatched from the main branch" >&2
+            exit 1
+          fi
+          if [[ ! "$TAG" =~ ^v([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag. Use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcN" >&2
+            exit 1
+          fi
+          case "$VARIANT" in debug|release) ;; *) exit 1 ;; esac
+          VERSION_NAME="${TAG#v}"
+          VERSION_CODE=$((10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[2]} * 1000 + 10#${BASH_REMATCH[3]} + 1))
+          # BASH_REMATCH is from the tag check above; verify bounds for Android versionCode.
+          if (( VERSION_CODE > 2100000000 )); then exit 1; fi
+          echo "APP_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Prepare production signing
+        if: inputs.variant == 'release'
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for required in RELEASE_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            if [[ -z "${!required}" ]]; then
+              echo "Missing $required. See docs/RELEASING.md" >&2
+              exit 1
+            fi
+          done
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          chmod 600 "$RUNNER_TEMP/release.keystore"
+          echo "RELEASE_STORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build debug preview
+        if: inputs.variant == 'debug'
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -PappVersionName="$APP_VERSION_NAME" -PappVersionCode="$APP_VERSION_CODE"
+
+      - name: Build signed production release
+        if: inputs.variant == 'release'
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace -PappVersionName="$APP_VERSION_NAME" -PappVersionCode="$APP_VERSION_CODE"
+
+      - name: Prepare APK and checksum
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          SOURCE_APK="app/build/outputs/apk/$VARIANT/app-$VARIANT.apk"
+          test -f "$SOURCE_APK"
+          APP_NAME="FlashSaleHelper-${TAG}-${VARIANT}.apk"
+          cp "$SOURCE_APK" "dist/$APP_NAME"
+          (cd dist && sha256sum "$APP_NAME" > SHA256SUMS.txt)
+          echo "apk_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "dist/$APP_NAME"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlashSaleHelper-${{ inputs.tag }}-${{ inputs.variant }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          APK="dist/${{ steps.package.outputs.apk_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Refusing to overwrite published release: $TAG" >&2
+            exit 1
+          fi
+          EXTRA=()
+          if [[ "$VARIANT" == "debug" || "$IS_PRERELEASE" == "true" ]]; then
+            EXTRA+=(--prerelease)
+          fi
+          if [[ "$VARIANT" == "debug" ]]; then
+            NOTES="Debug preview. The GitHub runner uses a temporary signing key; later preview APKs may require uninstalling earlier versions. Not for production updates."
+          else
+            NOTES="Production-signed APK. Keep your signing key protected for future Android updates."
+          fi
+          gh release create "$TAG" "$APK" dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "FlashSale Helper $TAG" \
+            --notes "$NOTES" "${EXTRA[@]}"

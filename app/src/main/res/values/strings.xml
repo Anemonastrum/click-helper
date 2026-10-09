@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">FlashSale Helper</string>
+    <string name="accessibility_description">Displays an optional countdown clock and runs only the touch points you explicitly configure and start. No root or Xposed is required. Turn it off in Accessibility settings at any time.</string>
+</resources>
