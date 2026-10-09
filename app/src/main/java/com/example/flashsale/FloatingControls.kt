@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Point
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
@@ -39,11 +40,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -111,8 +112,8 @@ class FloatingControls(private val service: FlashAccessibilityService) {
         val panel = ComposeView(service).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setBackgroundColor(Color.TRANSPARENT)
-            ViewTreeLifecycleOwner.set(this, lifecycleOwner)
-            ViewTreeSavedStateRegistryOwner.set(this, lifecycleOwner)
+            setViewTreeLifecycleOwner(lifecycleOwner)
+            setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setContent {
                 val themeController = remember { ThemeController(ColorSchemeMode.System) }
                 MiuixTheme(controller = themeController) {
