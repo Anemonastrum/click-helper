@@ -6,7 +6,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Point
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.MotionEvent
@@ -16,157 +15,254 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.ViewTreeSavedStateRegistryOwner
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import top.yukonga.miuix.kmp.basic.Button as MiuixButton
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.Text as MiuixText
+import top.yukonga.miuix.kmp.theme.ColorSchemeMode
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.ThemeController
 
 /**
- * Accessibility-owned overlays, no SYSTEM_ALERT_WINDOW or root.
- * Picker is modal: it captures user touches and never passes a picker tap to the target app.
+ * ComposeView inside a WindowManager TYPE_ACCESSIBILITY_OVERLAY.
+ * View-tree lifecycle and saved-state owners are required: an AccessibilityService
+ * has no Activity decor view and Compose must not retain a destroyed service.
+ */
+private class OverlayWindowOwner : SavedStateRegistryOwner {
+    private val registry = LifecycleRegistry(this)
+    private val savedStateController = SavedStateRegistryController.create(this)
+    override val lifecycle: Lifecycle get() = registry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
+
+    fun attach() {
+        savedStateController.performAttach()
+        savedStateController.performRestore(null)
+        registry.currentState = Lifecycle.State.RESUMED
+    }
+
+    fun destroy() { registry.currentState = Lifecycle.State.DESTROYED }
+}
+
+private data class OverlaySnapshot(
+    val localMs: Long = System.currentTimeMillis(),
+    val remainingMs: Long? = null,
+    val syncReading: SyncReading? = null,
+    val state: RunState = RunState.IDLE,
+    val status: String = "Ready"
+)
+
+/**
+ * Miuix Compose floating control panel.
+ * Crosshair picker intentionally uses a raw Android full-screen view to preserve
+ * absolute physical screen coordinate accuracy.
  */
 class FloatingControls(private val service: FlashAccessibilityService) {
     private val wm = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private var overlay: LinearLayout? = null
+    private var overlay: ComposeView? = null
+    private var owner: OverlayWindowOwner? = null
     private var params: WindowManager.LayoutParams? = null
     private var picker: FrameLayout? = null
-    private var compact = false
-    private lateinit var localTime: TextView
-    private lateinit var syncTime: TextView
-    private lateinit var countdown: TextView
-    private lateinit var status: TextView
-    private lateinit var metrics: TextView
-    private lateinit var actionRow: LinearLayout
-    private lateinit var arm: Button
-    private lateinit var start: Button
-    private lateinit var stop: Button
-    private lateinit var toggle: Button
+    private var compact by mutableStateOf(false)
+    private var snapshot by mutableStateOf(OverlaySnapshot())
     private val displayFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     private fun dp(value: Int) = (value * service.resources.displayMetrics.density).toInt()
     private fun background(color: Int, radius: Int = 12): GradientDrawable = GradientDrawable().apply {
-        setColor(color); cornerRadius = dp(radius).toFloat()
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
     }
 
     fun show() {
         if (overlay != null || picker != null) return
-        val panel = LinearLayout(service).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(9), dp(6), dp(9), dp(7))
-            background = background(Color.rgb(27, 33, 44))
-            elevation = dp(6).toFloat()
-        }
-        val heading = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
-        val title = text("≡ FlashSale Helper", 13f, true).apply {
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        heading.addView(title)
-        toggle = button("MIN") { compact = !compact; updateVisibility() }
-        heading.addView(toggle)
-        panel.addView(heading)
-        title.setOnTouchListener(object : View.OnTouchListener {
-            private var initialX = 0
-            private var initialY = 0
-            private var downX = 0f
-            private var downY = 0f
-            override fun onTouch(v: View?, event: MotionEvent): Boolean {
-                val lp = params ?: return false
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = lp.x; initialY = lp.y; downX = event.rawX; downY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        lp.x = (initialX + event.rawX - downX).toInt().coerceAtLeast(0)
-                        lp.y = (initialY + event.rawY - downY).toInt().coerceAtLeast(0)
-                        runCatching { wm.updateViewLayout(panel, lp) }
-                        return true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> return true
+        val lifecycleOwner = OverlayWindowOwner()
+        lifecycleOwner.attach()
+        val panel = ComposeView(service).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setBackgroundColor(Color.TRANSPARENT)
+            ViewTreeLifecycleOwner.set(this, lifecycleOwner)
+            ViewTreeSavedStateRegistryOwner.set(this, lifecycleOwner)
+            setContent {
+                val themeController = remember { ThemeController(ColorSchemeMode.System) }
+                MiuixTheme(controller = themeController) {
+                    OverlayPanel(snapshot)
                 }
-                return false
             }
-        })
-
-        localTime = text("Local  --:--:--.---", 22f, true).apply { typeface = Typeface.MONOSPACE }
-        syncTime = text("NTP    --:--:--.---", 14f).apply { typeface = Typeface.MONOSPACE }
-        countdown = text("T-minus --:--:--.---", 15f, true).apply { typeface = Typeface.MONOSPACE }
-        status = text("IDLE", 11f)
-        metrics = text("NTP not synced", 11f)
-        listOf(localTime, syncTime, countdown, status, metrics).forEach(panel::addView)
-
-        actionRow = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
-        actionRow.addView(button("+ TARGET") { service.beginPick() })
-        actionRow.addView(button("SYNC") { service.syncClock() })
-        actionRow.addView(button("SETTINGS") {
-            service.startActivity(android.content.Intent(service, MainActivity::class.java).apply {
-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
-        })
-        panel.addView(actionRow)
-        val controls = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
-        arm = button("ARM") { service.arm() }
-        start = button("START") { service.startCountdown() }
-        stop = button("STOP") { service.stopExecution() }
-        controls.addView(arm); controls.addView(start); controls.addView(stop)
-        panel.addView(controls)
-        val width = (service.resources.displayMetrics.widthPixels - dp(20)).coerceAtMost(dp(380))
+        }
+        val width = (service.resources.displayMetrics.widthPixels - dp(20)).coerceAtMost(dp(390))
         val lp = WindowManager.LayoutParams(
-            width, WindowManager.LayoutParams.WRAP_CONTENT,
+            width,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = dp(10); y = dp(90) }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = dp(10)
+            y = dp(90)
+        }
         try {
-            wm.addView(panel, lp); params = lp; overlay = panel
-            updateVisibility()
+            wm.addView(panel, lp)
+            owner = lifecycleOwner
+            params = lp
+            overlay = panel
             refresh()
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            lifecycleOwner.destroy()
+            panel.disposeComposition()
+        }
     }
 
-    private fun updateVisibility() {
-        if (overlay == null) return
-        val visibility = if (compact) View.GONE else View.VISIBLE
-        syncTime.visibility = visibility
-        metrics.visibility = visibility
-        status.visibility = visibility
-        actionRow.visibility = visibility
-        toggle.text = if (compact) "EXPAND" else "MIN"
-        // STOP remains visible even in compact mode.
+    @Composable
+    private fun OverlayPanel(data: OverlaySnapshot) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MiuixText(
+                        "≡ Click Helper",
+                        modifier = Modifier.weight(1f).pointerInput(Unit) {
+                            detectDragGestures { change, distance ->
+                                change.consume()
+                                moveBy(distance.x, distance.y)
+                            }
+                        },
+                        style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    )
+                    MiuixButton(onClick = { compact = !compact }) {
+                        MiuixText(if (compact) "Expand" else "Min")
+                    }
+                }
+                MiuixText(
+                    "Local  " + displayFormat.format(Date(data.localMs)),
+                    style = TextStyle(fontSize = 21.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                )
+                if (!compact) {
+                    MiuixText(
+                        if (data.syncReading == null) "NTP    not synchronized" else
+                            "NTP    " + displayFormat.format(Date(data.localMs + data.syncReading.offsetMs)),
+                        style = TextStyle(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    )
+                    MiuixText(
+                        "T-minus " + (data.remainingMs?.let(::formatRemaining) ?: "--:--:--.---"),
+                        style = TextStyle(fontSize = 17.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+                    )
+                    MiuixText(data.state.name + ": " + data.status, style = TextStyle(fontSize = 12.sp))
+                    val sync = data.syncReading
+                    MiuixText(
+                        if (sync == null) "RTT --  |  Offset --  |  Jitter --"
+                        else "RTT ${sync.roundTripMs}ms | Offset ${sync.offsetMs}ms | Jitter ±${sync.jitterMs}ms",
+                        style = TextStyle(fontSize = 11.sp)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        MiuixButton(modifier = Modifier.weight(1f), onClick = { service.beginPick() }) { MiuixText("+ Target") }
+                        MiuixButton(modifier = Modifier.weight(1f), onClick = { service.syncClock() }) { MiuixText("Sync") }
+                        MiuixButton(modifier = Modifier.weight(1f), onClick = {
+                            service.startActivity(android.content.Intent(service, MainActivity::class.java).apply {
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            })
+                        }) { MiuixText("Settings") }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    MiuixButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = data.state !in setOf(RunState.ARMED, RunState.COUNTDOWN, RunState.RUNNING),
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                        onClick = { service.arm() }
+                    ) { MiuixText("ARM") }
+                    MiuixButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = data.state == RunState.ARMED,
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                        onClick = { service.startCountdown() }
+                    ) { MiuixText("START") }
+                    MiuixButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = data.state in setOf(RunState.ARMED, RunState.COUNTDOWN, RunState.RUNNING),
+                        onClick = { service.stopExecution() }
+                    ) { MiuixText("STOP") }
+                }
+            }
+        }
+    }
+
+    private fun formatRemaining(ms: Long): String {
+        val value = ms.coerceAtLeast(0L)
+        return "%02d:%02d:%02d.%03d".format(
+            Locale.US, value / 3_600_000, (value / 60_000) % 60,
+            (value / 1000) % 60, value % 1000
+        )
+    }
+
+    private fun moveBy(deltaX: Float, deltaY: Float) {
+        val current = params ?: return
+        val panel = overlay ?: return
+        current.x = (current.x + deltaX.toInt()).coerceAtLeast(0)
+        current.y = (current.y + deltaY.toInt()).coerceAtLeast(0)
+        runCatching { wm.updateViewLayout(panel, current) }
     }
 
     fun hide() {
         overlay?.let { runCatching { wm.removeView(it) } }
         overlay = null
         params = null
+        owner?.destroy()
+        owner = null
     }
 
     fun refresh() {
-        if (overlay == null) return
-        val now = System.currentTimeMillis()
-        val sync = service.syncReading
-        localTime.text = "Local  ${displayFormat.format(Date(now))}"
-        syncTime.text = if (sync == null) "NTP    not synchronized"
-            else "NTP    ${displayFormat.format(Date(now + sync.offsetMs))}"
-        val remainingMs = service.remainingMs()
-        countdown.text = if (remainingMs == null) "T-minus --:--:--.---" else {
-            val ms = remainingMs.coerceAtLeast(0L)
-            "T-minus %02d:%02d:%02d.%03d".format(Locale.US,
-                ms / 3_600_000, (ms / 60_000) % 60, (ms / 1000) % 60, ms % 1000)
+        if (overlay != null) {
+            snapshot = OverlaySnapshot(
+                localMs = System.currentTimeMillis(),
+                remainingMs = service.remainingMs(),
+                syncReading = service.syncReading,
+                state = service.state,
+                status = service.statusMessage
+            )
         }
-        status.text = "${service.state.name}: ${service.statusMessage}"
-        metrics.text = if (sync == null) "RTT -- | Offset -- | Jitter --"
-            else "RTT ${sync.roundTripMs}ms | Offset ${sync.offsetMs}ms | Jitter ±${sync.jitterMs}ms"
-        arm.isEnabled = service.state !in setOf(RunState.ARMED, RunState.COUNTDOWN, RunState.RUNNING)
-        start.isEnabled = service.state == RunState.ARMED
-        stop.isEnabled = service.state in setOf(RunState.ARMED, RunState.COUNTDOWN, RunState.RUNNING)
     }
 
     fun wouldObscureTarget(x: Int, y: Int): Boolean {
-        val view = overlay ?: return false
-        val location = IntArray(2)
-        view.getLocationOnScreen(location)
-        return x >= location[0] && x <= location[0] + view.width &&
-            y >= location[1] && y <= location[1] + view.height
+        val panel = overlay ?: return false
+        val position = IntArray(2)
+        panel.getLocationOnScreen(position)
+        return x >= position[0] && x <= position[0] + panel.width &&
+            y >= position[1] && y <= position[1] + panel.height
     }
 
     /** Drag or tap anywhere to position a marker; SAVE captures the mark, not the SAVE button. */
