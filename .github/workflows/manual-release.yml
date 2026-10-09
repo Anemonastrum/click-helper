@@ -49,10 +49,10 @@ jobs:
         with:
           packages: 'platform-tools'
       - name: Install Android API and build tools
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
+          gradle-version: '9.7.1'
 
       - name: Validate inputs
         shell: bash
@@ -121,7 +121,7 @@ jobs:
           cp "$SOURCE_APK" "dist/$APP_NAME"
           (cd dist && sha256sum "$APP_NAME" > SHA256SUMS.txt)
           echo "apk_name=$APP_NAME" >> "$GITHUB_OUTPUT"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "dist/$APP_NAME"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "dist/$APP_NAME"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
