@@ -1,7 +1,7 @@
 # System Design — FlashSale Helper
 
 **Status:** Implemented prototype architecture, with future extension points distinguished below.  
-**Android stack:** Kotlin, Android SDK 35, `AccessibilityService`, `TYPE_ACCESSIBILITY_OVERLAY`, private `SharedPreferences`, direct SNTP over UDP.
+**Android stack:** Kotlin + Miuix 0.9.4 + Jetpack Compose, Android SDK 37.0, `AccessibilityService`, `TYPE_ACCESSIBILITY_OVERLAY`, private `SharedPreferences`, direct SNTP over UDP.
 
 ## 1. Context and boundary
 
@@ -26,8 +26,8 @@ No hooking, root services, input event injection binaries, intermediary cloud se
 
 | Component | Responsibility | Important behavior |
 |---|---|---|
-| `MainActivity` | Settings and target list; permission guidance | Persists target time, early lead, dry-run flag, tap duration, target delays |
-| `FloatingControls` | Movable overlay, clock, countdown, actions, crosshair picker | Accessibility overlay; picker consumes touches and requires SAVE; STOP remains visible in compact mode |
+| `MainActivity` | Miuix Compose settings and target list; permission guidance | Persists target time, early lead, dry-run flag, tap duration, target delays |
+| `FloatingControls` | Miuix ComposeView floating controls, clock, countdown, actions, custom raw crosshair picker | Accessibility overlay; picker consumes touches and requires SAVE; STOP remains visible in compact mode |
 | `FlashAccessibilityService` | Service lifecycle, state, validation, serial gestures and logging | Uses a run token to invalidate stale callbacks following STOP; checks package and rotation on each step |
 | `SettingsStore` | Local JSON array of normalized touch points in preferences | Clamps durations and delays; points belong to one target app |
 | `Scheduler` | Pure time computation | Next time occurrence, explicit early lead, convert wall-clock plan to monotonic deadline |
@@ -154,3 +154,9 @@ A tap is saved after the user positions a crosshair and taps SAVE. Coordinates a
 - Android SystemClock: https://developer.android.com/reference/android/os/SystemClock
 - Gradle/Android compatibility: https://developer.android.com/build/releases/agp-8-13-0-release-notes
 - GitHub CLI release create: https://cli.github.com/manual/gh_release_create
+
+## UI framework migration (October 2026)
+
+The main `ComponentActivity` hosts `MiuixTheme` and Miuix `Scaffold`, `TopAppBar`, `Card`, `Button`, `Text`, `TextField`, and `SwitchPreference`. The accessibility overlay uses an Android `WindowManager` `TYPE_ACCESSIBILITY_OVERLAY` with a lifecycle-owned `ComposeView`; its custom crosshair picker remains a full-screen Android View for exact coordinate capture. A `SavedStateRegistryOwner` and `LifecycleOwner` are attached to the overlay's Compose view tree and destroyed upon removal, avoiding activity lifecycle assumptions. `FlashAccessibilityService`, `Scheduler`, `SettingsStore`, and `NtpSync` are unchanged by the visual migration.
+
+Miuix 0.9.4 requires compile API 37.0 and the app is built using Android Gradle Plugin 9.4.1 and Gradle 9.7.1. API 37.0 must be installed with `sdkmanager --channel=3 'platforms;android-37.0'`. Only `compileSdk` changes to 37; runtime `targetSdk` remains 35 and `minSdk` remains 26.

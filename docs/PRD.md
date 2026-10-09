@@ -2,7 +2,7 @@
 
 **Version:** 0.1.0 prototype  
 **Date:** 2026-10-10  
-**Platform:** Android 8.0+ (minSdk 26), Android AccessibilityService only  
+**Platform:** Android 8.0+ (minSdk 26), AccessibilityService only, Miuix Compose UI  
 **Project objective:** Enable an informed user to plan, preview and manually arm an on-device sequence of touches with a millisecond-formatted live clock and a scheduled start.
 
 ## 1. Problem
@@ -120,3 +120,7 @@ At any time while ARMED/COUNTDOWN/RUNNING user may press **STOP**. All subsequen
 - Should a run require an explicit *allow gestures* confirmation after a successful dry run?
 - How should process death and screen lock be represented in session history?
 - What timing error budget is reasonable on supported devices and OEMs?
+
+## Visual design implementation
+
+The main dashboard and floating action panel should use Miuix components and follow system light/dark theme. The dashboard includes service setup, execution timing, RTT compensation, dry-run switch, saved touch targets, and usage guidance. The overlay must keep the millisecond clock and ARM/START/STOP controls available while the target app is visible. The raw touch crosshair picker remains a full-screen Android overlay for accurate physical coordinates.

@@ -67,7 +67,7 @@ Then manually run a unique tag such as `v0.1.0` with `variant=release`, `prerele
 
 ```bash
 sha256sum -c SHA256SUMS.txt
-$ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose FlashSaleHelper-v0.1.0-release.apk
+$ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose FlashSaleHelper-v0.1.0-release.apk
 ```
 
 On Windows, PowerShell can calculate a hash using `Get-FileHash <file> -Algorithm SHA256`.
@@ -85,3 +85,7 @@ The release workflow requests `contents: write` for its own `GITHUB_TOKEN` (GitH
 - **Permission denied on release:** check repository Actions permission `contents: write`, and organization rules.
 - **Release tag already exists:** choose a new tag; changing a published APK in place is intentionally disabled.
 - **Android refuses sideloaded accessibility:** newer Android builds may require explicit approval under the application's system settings before the service can be enabled.
+
+## Miuix / API 37.0 toolchain
+
+GitHub Actions installs `platforms;android-37.0` from sdkmanager channel 3 (not the nonexistent `platforms;android-37`). The app uses AGP 9.4.1 / Gradle 9.7.1 and `compileSdk { version = release(37) { minorApiLevel = 0 } }`. Release signing remains the same; debug builds are not suitable for upgrade-safe production distribution.

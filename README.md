@@ -1,15 +1,22 @@
 # FlashSale Helper (Android)
 
-An **AccessibilityService-only**, no-root Android proof-of-concept for **user-configured, time-scheduled UI gestures**. Features include a floating **`HH:mm:ss.SSS`** clock, optional NTP server-time estimate, countdown, movable overlay, crosshair target picker, ARM / START / STOP, saved multi-step taps, dry-run execution, and local execution diagnostics.
+A **Miuix Compose-designed**, AccessibilityService-only, no-root Android proof-of-concept for **user-configured, time-scheduled UI gestures**. Features include a floating **`HH:mm:ss.SSS`** clock, optional NTP server-time estimate, countdown, movable overlay, crosshair target picker, ARM / START / STOP, saved multi-step taps, dry-run execution, and local execution diagnostics.
 
 > **Status: v0.1.0 prototype.** The Android APK is built by GitHub Actions once you upload the source. The implementation has not been device-tested here. Timed gestures do not guarantee precise on-screen execution or acceptance by a merchant's server. Respect the target app's terms and purchase limits; never use this to bypass verification or anti-abuse measures. Keep final payments under user control.
 
 ## Requirements
 
 - Android **8.0+ (API 26)**; Android 12–16 behavior should be tested on actual devices.
-- Android Studio, Android SDK 35, JDK 17 and Gradle 8.13 (Android Gradle Plugin 8.13.2).
+- Android Studio, Android SDK **37.0** (minor API level 0), JDK 17 and Gradle **9.7.1** (Android Gradle Plugin **9.4.1**).
 - No root, Xposed, LSPosed, `SYSTEM_ALERT_WINDOW`, or backend account required.
 - Optional network access to an NTP server (UDP 123) for synchronization.
+
+## Miuix interface
+
+- The settings dashboard and draggable accessibility overlay are rendered using [Miuix](https://github.com/compose-miuix-ui/miuix) **0.9.4** on Jetpack Compose, with system-driven light/dark colors.
+- Touch-point selection remains a custom full-screen Android view to preserve physical touch coordinates.
+- ComposeView in the accessibility overlay has its own lifecycle and saved-state registry; it is removed when the overlay closes.
+- This project uses Miuix under the terms of its Apache-2.0 license. The Miuix sources are not copied into this repository.
 
 ## What works in this prototype
 
