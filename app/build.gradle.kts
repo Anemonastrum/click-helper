@@ -5,7 +5,11 @@ plugins {
 
 android {
     namespace = "com.example.flashsale"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 0
+        }
+    }
 
     defaultConfig {
         applicationId = "com.example.flashsale"
