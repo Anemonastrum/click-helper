@@ -78,7 +78,8 @@ The release workflow requests `contents: write` for its own `GITHUB_TOKEN` (GitH
 
 ## 6. Troubleshooting
 
-- **`sdkmanager` unavailable:** inspect the `android-actions/setup-android` step; GitHub's runner image must include supported Android command-line tools.
+- **`Failed to find package 'tools'` during Android SDK setup:** use `android-actions/setup-android@v4` with `packages: 'platform-tools'`. The legacy SDK `tools` package was removed by Google; do not request it.
+- **`sdkmanager` unavailable:** inspect the `android-actions/setup-android@v4` step; GitHub's runner image must include supported Android command-line tools.
 - **Missing signing secret:** choose debug preview, or configure all four release signing secrets.
 - **APK unsigned:** inspect Gradle's `release` signing configuration and the `apksigner verify` output.
 - **Permission denied on release:** check repository Actions permission `contents: write`, and organization rules.
